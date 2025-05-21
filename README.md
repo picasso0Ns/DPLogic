@@ -35,7 +35,6 @@ The codebase is organized as follows:
 ```
 .
 ├── main.py               # Main entry point
-├── train.py              # Training script
 ├── utils.py              # Utility functions
 ├── models/               # Model implementations
 │   ├── transH.py         # TransH embedding model
@@ -69,7 +68,7 @@ dataset_name/
 To train and evaluate the model on a dataset, run:
 
 ```bash
-python train.py --dataset family --epochs 1000 --batch_size 128 --lr 0.001
+python main.py --dataset FB15k237 --epochs 1000 --batch_size 128 --lr 0.001
 ```
 
 ### Main Parameters
