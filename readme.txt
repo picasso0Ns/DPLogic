@@ -100,16 +100,6 @@ The implementation supports the following datasets:
 
 ## Example
 
-To run the model on the family dataset:
 
-```bash
-python train.py --dataset family --epochs 500 --lr 0.001 --batch_size 64 --rule_threshold 0.4
-```
 
-## Results
 
-After training and evaluation, results will be saved in the `results/` directory:
-- `{dataset}_results.json`: Evaluation metrics (MRR, Hits@1, Hits@3, Hits@10)
-- `{dataset}_loss.png`: Training loss curve
-
-If `--save_model` is specified, model checkpoints will be saved in the `checkpoints/` directory.
