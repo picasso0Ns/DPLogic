@@ -10,12 +10,9 @@ from models.relation_rule_embedding import RelationRuleEmbedding
 from models.predicate_logic import PredicateLogic
 from models.SimpleRuleEnhancedTransH import SimpleRuleEnhancedTransH
 # from optimization.joint_optimization import JointOptimization
-# # 导入新的改进联合优化类
 from optimization.joint_optimization import ImprovedJointOptimization
 from data_utils.dataset import KnowledgeGraphDataset
 from utils import create_dirs, save_model, save_results, set_seed
-
-# 修改后的评估函数 - 只打印每5000个样本的性能
 def evaluate_transH(model, dataset, device, test_triples=None, batch_size=128, sample_size=None):
     model.eval()
     
@@ -275,7 +272,7 @@ def parse_args():
     parser.add_argument('--eval_sample_size', type=int, default=None,
                     help='Number of test samples to use for intermediate evaluations')
     
-    # 改进的联合优化参数
+
     parser.add_argument('--improved_joint', action='store_true',
                     help='使用改进的联合优化')
     parser.add_argument('--pretrain_epochs', type=int, default=10, 
@@ -294,7 +291,7 @@ def parse_args():
     return parser.parse_args()
 
 def train_transH_with_early_stopping(model, dataset, optimizer, args, device):
-    """修复后的带早停机制的TransH训练函数"""
+
     train_loader = dataset.get_train_dataloader(args.batch_size, args.neg_ratio)
     
     losses = []
@@ -494,8 +491,7 @@ def train_and_evaluate(args):
         ).to(device)
         
         if args.improved_joint:
-            print("使用改进的联合优化...")
-            # 使用改进的联合优化器
+            print("使用联合优化...")
             joint_optimizer = ImprovedJointOptimization(
                 transH=transH,
                 relation_rule_embedding=relation_rule_embedding,
@@ -510,7 +506,7 @@ def train_and_evaluate(args):
                 rule_decay_rate=0.9
             )
             
-            # 使用改进的联合优化进行训练
+
             try:
                 losses, best_mrr, pretrained_transH = joint_optimizer.train(
                     dataset=dataset,
@@ -637,7 +633,7 @@ def train_and_evaluate(args):
                 save_results(results, f'results/{args.dataset}_{args.model_type}_results.json')
                 
         else:  # 'joint'
-            # 联合优化模型已经在训练过程中使用最佳状态进行了评估
+
             print("联合优化模型的最终评估已在训练过程中完成")
             print(f"最终MRR: {joint_mrr:.4f}, Hits@1: {joint_hits1:.4f}, Hits@3: {joint_hits3:.4f}, Hits@10: {joint_hits10:.4f}")
             
@@ -666,20 +662,6 @@ def train_and_evaluate(args):
         traceback.print_exc()
     
     print("\n训练和评估完成!")
-    
-    # # 如果需要，保存模型
-    # if args.save_model:
-    #     try:
-    #         model_suffix = '_improved' if args.model_type == 'joint' and args.improved_joint else ''
-    #         if args.model_type == 'transH':
-    #             save_model(model, f'checkpoints/{args.dataset}_transH.pt')
-    #         elif args.model_type == 'simple':
-    #             save_model(model, f'checkpoints/{args.dataset}_simple_transH.pt')
-    #         else:
-    #             save_model(transH, f'checkpoints/{args.dataset}_transH{model_suffix}.pt')
-    #             save_model(relation_rule_embedding, f'checkpoints/{args.dataset}_relation_rule_embedding{model_suffix}.pt')
-    #     except Exception as e:
-    #         print(f"保存模型失败: {str(e)}")
 
 if __name__ == '__main__':
     args = parse_args()
