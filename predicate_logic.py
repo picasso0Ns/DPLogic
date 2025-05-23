@@ -12,8 +12,8 @@ class PredicateLogic:
     Predicate Logic Representation component for constructing MLN structure.
     Uses GNN-inspired approach for representing node dependencies.
     """
-    def __init__(self, dataset, rule_threshold=0.5, max_rule_length=2, max_rules=100, max_time=300, 
-                 subgraph_size_ratio=0.2, max_nodes_per_relation=500):
+    def __init__(self, dataset, rule_threshold=0.2, max_rule_length=3, max_rules=100, max_time=300, 
+                 subgraph_size_ratio=0.1, max_nodes_per_relation=1000):
         """
         Initialize the predicate logic component.
         
@@ -57,6 +57,7 @@ class PredicateLogic:
         """
         Extract Horn rules from the knowledge graph.
         Uses a simplified approach based on co-occurrence patterns.
+        针对大型数据集的优化版本
         """
         print("Extracting Horn rules...")
         
@@ -64,8 +65,7 @@ class PredicateLogic:
         relation_to_entity_pairs = defaultdict(set)
         entity_pair_to_relations = defaultdict(set)
         
-        # Fill mappings from all facts - this can be time-consuming for large KGs
-        # so we add a progress bar
+        # Fill mappings from all facts
         print("Building relation mappings...")
         for h, r, t in tqdm(self.dataset.all_facts, desc="Loading facts"):
             relation_to_entity_pairs[r].add((h, t))
@@ -77,10 +77,38 @@ class PredicateLogic:
         
         # Calculate relation statistics
         relation_stats = {r: len(pairs) for r, pairs in relation_to_entity_pairs.items()}
+        print(f"Total relations in dataset: {len(relation_stats)}")
+        
+        # 根据数据集大小动态调整参数
+        total_relations = len(relation_stats)
+        total_facts = len(self.dataset.all_facts)
+        
+        if total_facts > 100000:  # 大型数据集 (如FB15k237, WN18RR)
+            max_relations_1hop = min(100, total_relations)  # 增加到100个关系
+            max_relations_2hop = min(30, total_relations)   # 增加到30个关系
+            max_time_limit = 1800  # 30分钟
+            max_samples_per_rule = 1000  # 增加采样数
+            print(f"大型数据集模式: 关系数={total_relations}, 事实数={total_facts}")
+        elif total_facts > 10000:  # 中型数据集
+            max_relations_1hop = min(50, total_relations)
+            max_relations_2hop = min(15, total_relations)
+            max_time_limit = 900  # 15分钟
+            max_samples_per_rule = 500
+            print(f"中型数据集模式: 关系数={total_relations}, 事实数={total_facts}")
+        else:  # 小型数据集 (如family, kinship)
+            max_relations_1hop = total_relations  # 全部关系
+            max_relations_2hop = total_relations
+            max_time_limit = 300  # 5分钟
+            max_samples_per_rule = 100
+            print(f"小型数据集模式: 关系数={total_relations}, 事实数={total_facts}")
         
         # For efficiency, focus on the most frequent relations first
         relation_items = sorted(relation_stats.items(), key=lambda x: x[1], reverse=True)
-        top_relations = [r for r, _ in relation_items[:min(20, len(relation_items))]]
+        top_relations_1hop = [r for r, _ in relation_items[:max_relations_1hop]]
+        top_relations_2hop = [r for r, _ in relation_items[:max_relations_2hop]]
+        
+        print(f"使用 {len(top_relations_1hop)} 个关系进行1跳规则挖掘")
+        print(f"使用 {len(top_relations_2hop)} 个关系进行2跳规则挖掘")
         
         # Set a time limit
         start_time = time.time()
@@ -88,22 +116,24 @@ class PredicateLogic:
         # Try all possible rule combinations up to max_rule_length
         print(f"Mining rules with confidence threshold {self.rule_threshold}...")
         
-        # Process only rules involving the most frequent relations
-        total_pairs = len(top_relations) * len(top_relations)
-        with tqdm(total=total_pairs, desc="Checking relation pairs") as pbar:
-            for head_rel in top_relations:
+        # 1跳规则: A -> B
+        total_pairs = len(top_relations_1hop) * len(top_relations_1hop)
+        rules_found = 0
+        
+        with tqdm(total=total_pairs, desc="检查1跳规则") as pbar:
+            for head_rel in top_relations_1hop:
                 # Check time limit
-                if time.time() - start_time > self.max_time:
-                    print(f"Time limit of {self.max_time}s reached. Stopping rule extraction.")
+                if time.time() - start_time > max_time_limit:
+                    print(f"时间限制 {max_time_limit}s 到达，停止规则提取")
                     break
                 
                 # Check rule limit
                 if len(self.rules) >= self.max_rules:
-                    print(f"Maximum number of rules ({self.max_rules}) reached.")
+                    print(f"达到最大规则数量 ({self.max_rules})")
                     break
                 
                 # For rules with a single body relation
-                for body_rel in top_relations:
+                for body_rel in top_relations_1hop:
                     pbar.update(1)
                     
                     if head_rel == body_rel:
@@ -113,7 +143,7 @@ class PredicateLogic:
                     head_pairs = relation_to_entity_pairs[head_rel]
                     body_pairs = relation_to_entity_pairs[body_rel]
                     
-                    if not body_pairs:
+                    if not body_pairs or len(body_pairs) < 5:  # 至少需要5个支持
                         continue
                     
                     # Calculate overlap of entity pairs
@@ -121,77 +151,134 @@ class PredicateLogic:
                     
                     # Calculate rule confidence
                     confidence = len(overlap) / len(body_pairs) if body_pairs else 0
+                    support = len(overlap)
                     
-                    if confidence >= self.rule_threshold and len(overlap) > 0:
-                        # Convert list to tuple for hashing
-                        rule = (head_rel, (body_rel,))  # Use a tuple instead of a list
+                    # 添加支持度要求，避免低频规则
+                    min_support = max(3, int(len(body_pairs) * 0.1))  # 至少3个或10%支持
+                    
+                    if confidence >= self.rule_threshold and support >= min_support:
+                        rule = (head_rel, (body_rel,))
                         self.rules.append(rule)
                         self.rule_weights[rule] = confidence
+                        rules_found += 1
+                        
+                        if rules_found % 10 == 0:
+                            print(f"已找到 {rules_found} 条1跳规则")
         
-        # For rules with two body relations, we'll limit to a small number
-        # This is much more time-consuming
-        if self.max_rule_length >= 2 and len(self.rules) < self.max_rules:
-            print("Checking for 2-hop rules (this may take a while)...")
-            # Sample a smaller set of relations to reduce computation
-            sample_size = min(5, len(top_relations))
-            sampled_relations = top_relations[:sample_size]
+        print(f"找到 {rules_found} 条1跳规则")
+        
+        # 2跳规则: A,B -> C (如果还有时间和空间)
+        if self.max_rule_length >= 2 and len(self.rules) < self.max_rules and time.time() - start_time < max_time_limit:
+            print("开始2跳规则挖掘...")
             
-            total_triples = len(sampled_relations) * len(sampled_relations) * len(sampled_relations)
-            with tqdm(total=total_triples, desc="Checking relation triples") as pbar:
-                for head_rel in sampled_relations:
-                    # Check time limit
-                    if time.time() - start_time > self.max_time:
-                        print(f"Time limit of {self.max_time}s reached. Stopping rule extraction.")
+            # 更智能的2跳规则挖掘
+            rules_2hop_found = 0
+            total_combinations = len(top_relations_2hop) ** 3
+            processed = 0
+            
+            with tqdm(total=min(total_combinations, 10000), desc="检查2跳规则") as pbar:
+                for head_rel in top_relations_2hop:
+                    if time.time() - start_time > max_time_limit:
                         break
                     
-                    # Check rule limit
                     if len(self.rules) >= self.max_rules:
-                        print(f"Maximum number of rules ({self.max_rules}) reached.")
                         break
                     
-                    for body_rel1 in sampled_relations:
-                        for body_rel2 in sampled_relations:
+                    head_pairs = relation_to_entity_pairs[head_rel]
+                    if len(head_pairs) < 10:  # 头关系需要足够的支持
+                        continue
+                    
+                    for body_rel1 in top_relations_2hop:
+                        if processed >= 10000:  # 限制处理数量
+                            break
+                        
+                        for body_rel2 in top_relations_2hop:
+                            processed += 1
                             pbar.update(1)
                             
                             if head_rel == body_rel1 or head_rel == body_rel2 or body_rel1 == body_rel2:
                                 continue
                             
-                            # For efficiency, estimate confidence with sampling
-                            max_samples = 100  # Limit samples
+                            # 高效的路径查找
+                            rel1_pairs = relation_to_entity_pairs[body_rel1]
+                            rel2_pairs = relation_to_entity_pairs[body_rel2]
                             
-                            # Find entity pairs connected by body_rel1
-                            rel1_pairs = list(relation_to_entity_pairs[body_rel1])
-                            if not rel1_pairs:
+                            if not rel1_pairs or not rel2_pairs:
                                 continue
                             
-                            # Sample pairs
-                            if len(rel1_pairs) > max_samples:
-                                rel1_pairs = random.sample(rel1_pairs, max_samples)
+                            # 构建中间实体映射
+                            rel1_by_head = defaultdict(set)  # head -> set of tails
+                            for h, t in rel1_pairs:
+                                rel1_by_head[h].add(t)
                             
-                            # Count paths
+                            rel2_by_head = defaultdict(set)  # head -> set of tails
+                            for h, t in rel2_pairs:
+                                rel2_by_head[h].add(t)
+                            
+                            # 找到路径: (h, body_rel1, intermediate) AND (intermediate, body_rel2, t)
                             path_pairs = set()
+                            path_count = 0
+                            max_paths_to_check = max_samples_per_rule
                             
-                            for h1, t1 in rel1_pairs:
-                                # Find pairs where t1 is connected via body_rel2
-                                for h2, t2 in relation_to_entity_pairs[body_rel2]:
-                                    if h2 == t1:
-                                        path_pairs.add((h1, t2))
-                            
-                            # Calculate overlap with head relation
-                            if path_pairs:
-                                head_pairs = relation_to_entity_pairs[head_rel]
-                                overlap = path_pairs.intersection(head_pairs)
+                            for h in rel1_by_head:
+                                if path_count >= max_paths_to_check:
+                                    break
                                 
-                                # Calculate rule confidence
+                                for intermediate in rel1_by_head[h]:
+                                    if intermediate in rel2_by_head:
+                                        for t in rel2_by_head[intermediate]:
+                                            path_pairs.add((h, t))
+                                            path_count += 1
+                                            if path_count >= max_paths_to_check:
+                                                break
+                                    if path_count >= max_paths_to_check:
+                                        break
+                            
+                            # 计算与头关系的重叠
+                            if len(path_pairs) >= 5:  # 至少5个路径
+                                overlap = head_pairs.intersection(path_pairs)
                                 confidence = len(overlap) / len(path_pairs)
+                                support = len(overlap)
                                 
-                                if confidence >= self.rule_threshold and len(overlap) > 1:
+                                min_support_2hop = max(2, int(len(path_pairs) * 0.05))
+                                
+                                if confidence >= self.rule_threshold and support >= min_support_2hop:
                                     rule = (head_rel, (body_rel1, body_rel2))
                                     self.rules.append(rule)
                                     self.rule_weights[rule] = confidence
+                                    rules_2hop_found += 1
+                                    
+                                    if rules_2hop_found % 5 == 0:
+                                        print(f"已找到 {rules_2hop_found} 条2跳规则")
+                                    
+                                    if len(self.rules) >= self.max_rules:
+                                        break
+                        
+                        if len(self.rules) >= self.max_rules or processed >= 10000:
+                            break
+                    
+                    if len(self.rules) >= self.max_rules or processed >= 10000:
+                        break
+            
+            print(f"找到 {rules_2hop_found} 条2跳规则")
         
         elapsed = time.time() - start_time
-        print(f"Extracted {len(self.rules)} rules with confidence >= {self.rule_threshold} in {elapsed:.2f} seconds")
+        print(f"总共提取了 {len(self.rules)} 条规则，置信度 >= {self.rule_threshold}，耗时 {elapsed:.2f} 秒")
+        
+        # 打印一些统计信息
+        if self.rules:
+            confidences = list(self.rule_weights.values())
+            print(f"规则置信度统计: 最小={min(confidences):.3f}, 最大={max(confidences):.3f}, 平均={np.mean(confidences):.3f}")
+            
+            # 按置信度排序并展示前10条规则
+            sorted_rules = sorted(self.rules, key=lambda r: self.rule_weights[r], reverse=True)
+            print("\n置信度最高的前10条规则:")
+            for i, rule in enumerate(sorted_rules[:10]):
+                head_rel, body_rels = rule
+                confidence = self.rule_weights[rule]
+                print(f"{i+1:2d}. {head_rel} <- {body_rels}, 置信度: {confidence:.3f}")
+        else:
+            print("警告: 没有提取到任何规则！请考虑降低置信度阈值。")
     
     def _build_mln_structure_efficient(self):
         """
@@ -262,7 +349,7 @@ class PredicateLogic:
         
         # Check if the MLN is too large and reduce if necessary
         if len(self.MLN_nodes) > self.max_subgraph_size:
-            print(f"MLN too large ({len(self.MLN_nodes)} nodes). Reducing to {self.max_subgraph_size} nodes...")
+            # print(f"MLN too large ({len(self.MLN_nodes)} nodes). Reducing to {self.max_subgraph_size} nodes...")
             sampled_nodes = random.sample(list(self.MLN_nodes), self.max_subgraph_size)
             self.MLN_nodes = set(sampled_nodes)
             
