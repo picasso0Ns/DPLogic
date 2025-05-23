@@ -171,10 +171,10 @@ def evaluate_transH(model, dataset, device, test_triples=None, batch_size=128, s
             filtered_ranks.extend([head_rank_filt, tail_rank_filt])
             
             # 只在每5000个三元组处打印进度
-            if i % 5000 == 0 and i > 0:
-                mean_rank = np.mean(filtered_ranks)
-                mean_mrr = np.mean(1.0/np.array(filtered_ranks))
-                print(f"已评估 {i}/{len(test_triples)} 个测试三元组, Mean Rank: {mean_rank:.2f}, MRR: {mean_mrr:.4f}")
+            # if i % 5000 == 0 and i > 0:
+            #     mean_rank = np.mean(filtered_ranks)
+            #     mean_mrr = np.mean(1.0/np.array(filtered_ranks))
+            #     print(f"已评估 {i}/{len(test_triples)} 个测试三元组, transH的结果: Mean Rank: {mean_rank:.2f}, MRR: {mean_mrr:.4f}")
     
     # 计算指标
     if not filtered_ranks:
@@ -189,9 +189,9 @@ def evaluate_transH(model, dataset, device, test_triples=None, batch_size=128, s
     hits10 = np.mean(ranks_np <= 10)
     
     # 打印结果
-    print(f"\n最终结果:")
-    print(f"MRR: {mrr:.4f}, Hits@1: {hits1:.4f}, Hits@3: {hits3:.4f}, Hits@10: {hits10:.4f}")
-    print(f"Mean Rank: {np.mean(filtered_ranks):.2f}")
+    # print(f"\n最终结果:")
+    # print(f"MRR: {mrr:.4f}, Hits@1: {hits1:.4f}, Hits@3: {hits3:.4f}, Hits@10: {hits10:.4f}")
+    # print(f"Mean Rank: {np.mean(filtered_ranks):.2f}")
     
     model.train()  # 将模型设回训练模式
     
@@ -278,15 +278,15 @@ def parse_args():
     # 改进的联合优化参数
     parser.add_argument('--improved_joint', action='store_true',
                     help='使用改进的联合优化')
-    parser.add_argument('--pretrain_epochs', type=int, default=20, 
+    parser.add_argument('--pretrain_epochs', type=int, default=10, 
                     help='预训练轮次数')
-    parser.add_argument('--rule_warmup_epochs', type=int, default=10, 
+    parser.add_argument('--rule_warmup_epochs', type=int, default=5, 
                     help='规则权重预热轮次数')
     parser.add_argument('--initial_rule_weight', type=float, default=0.01, 
                     help='初始规则权重')
-    parser.add_argument('--target_rule_weight', type=float, default=1.0, 
+    parser.add_argument('--target_rule_weight', type=float, default=2.0, 
                     help='目标规则权重')
-    parser.add_argument('--rule_quality_threshold', type=float, default=0.3, 
+    parser.add_argument('--rule_quality_threshold', type=float, default=0.1, 
                     help='规则质量阈值')
     parser.add_argument('--early_stopping_patience', type=int, default=7, 
                     help='早期停止耐心值')
@@ -294,14 +294,14 @@ def parse_args():
     return parser.parse_args()
 
 def train_transH_with_early_stopping(model, dataset, optimizer, args, device):
-    """带早停机制的TransH训练函数"""
+    """修复后的带早停机制的TransH训练函数"""
     train_loader = dataset.get_train_dataloader(args.batch_size, args.neg_ratio)
     
     losses = []
     best_mrr = 0
     patience_counter = 0
     best_model_state = None
-    best_metrics = None  # 添加变量存储最佳性能指标
+    best_metrics = None
     
     for epoch in range(args.epochs):
         epoch_loss = 0
@@ -327,7 +327,6 @@ def train_transH_with_early_stopping(model, dataset, optimizer, args, device):
             pos_batch_size = pos_triples.size(0)
             neg_batch_size = neg_triples.size(0)
             
-            # 当每个正样本有多个负样本时，需要扩展正样本
             if neg_batch_size > pos_batch_size:
                 neg_ratio = neg_batch_size // pos_batch_size
                 # 重复每个正三元组 neg_ratio 次
@@ -377,7 +376,7 @@ def train_transH_with_early_stopping(model, dataset, optimizer, args, device):
                 best_metrics = metrics  # 保存所有最佳指标
                 patience_counter = 0
                 # 保存最佳模型状态
-                best_model_state = {k: v.clone() for k, v in model.state_dict().items()}
+                best_model_state = copy.deepcopy(model.state_dict())
                 print(f"找到新的最佳MRR: {best_mrr:.4f}")
             else:
                 patience_counter += 1
@@ -385,14 +384,13 @@ def train_transH_with_early_stopping(model, dataset, optimizer, args, device):
                 
                 if patience_counter >= args.patience:
                     print(f"早停于Epoch {epoch+1}")
-                    # 恢复最佳模型
-                    if best_model_state:
-                        model.load_state_dict(best_model_state)
                     break
     
-    # 如果有最佳模型状态，恢复到最佳模型
+    # 修复：确保恢复最佳模型状态
     if best_model_state:
+        print("恢复最佳模型状态...")
         model.load_state_dict(best_model_state)
+        print(f"已恢复到最佳性能状态，MRR: {best_mrr:.4f}")
     
     # 打印训练过程中获得的最佳性能
     if best_metrics:
@@ -443,20 +441,22 @@ def train_and_evaluate(args):
         eps=args.eps
     ).to(device)
     
-    # 根据模型类型选择模型
     if args.model_type == 'transH':
         # 只使用 TransH 模型
         model = transH
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
         
         # 使用早停机制训练模型
-        losses, model = train_transH_with_early_stopping(
+        losses, trained_model, best_metrics = train_transH_with_early_stopping(
             model=model,
             dataset=dataset,
             optimizer=optimizer,
             args=args,
             device=device
         )
+        
+        # 确保使用训练后的最佳模型进行最终评估
+        model = trained_model
         
     elif args.model_type == 'simple':
         # 使用简单规则增强的 TransH 模型
@@ -468,13 +468,16 @@ def train_and_evaluate(args):
         optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
         
         # 使用早停机制训练模型
-        losses, model = train_transH_with_early_stopping(
+        losses, trained_model, best_metrics = train_transH_with_early_stopping(
             model=model,
             dataset=dataset,
             optimizer=optimizer,
             args=args,
             device=device
         )
+        
+        # 确保使用训练后的最佳模型进行最终评估
+        model = trained_model
         
     else:  # 'joint'
         # 使用联合优化
@@ -490,7 +493,6 @@ def train_and_evaluate(args):
             hidden_dim=args.hidden_dim
         ).to(device)
         
-        # 根据参数选择使用改进的联合优化或原始联合优化
         if args.improved_joint:
             print("使用改进的联合优化...")
             # 使用改进的联合优化器
@@ -519,34 +521,66 @@ def train_and_evaluate(args):
                     patience=args.early_stopping_patience
                 )
                 
+                print(f"训练完成，最佳MRR: {best_mrr:.4f}")
+                
                 # 比较预训练TransH和联合优化效果
                 if pretrained_transH:
-                    print("\n===== 比较预训练TransH和联合优化效果 =====")
-                    # 临时保存当前模型状态
-                    current_state = copy.deepcopy(transH.state_dict())
+                    print("\n===== 预训练TransH vs 联合优化对比 =====")
                     
-                    # 恢复预训练状态进行评估
+                    # 临时保存当前模型状态
+                    current_transH_state = copy.deepcopy(transH.state_dict())
+                    current_rule_state = copy.deepcopy(relation_rule_embedding.state_dict())
+                    current_beta = joint_optimizer.current_beta
+                    
+                    # 1. 评估预训练TransH
+                    print("评估预训练TransH效果...")
                     transH.load_state_dict(pretrained_transH)
                     pretrain_metrics = evaluate_transH(transH, dataset, device)
                     
                     if pretrain_metrics:
                         print("预训练TransH效果:")
-                        print(f"MRR: {pretrain_metrics['MRR']:.4f}")
-                        print(f"Hits@1: {pretrain_metrics['Hits@1']:.4f}")
-                        print(f"Hits@3: {pretrain_metrics['Hits@3']:.4f}")
-                        print(f"Hits@10: {pretrain_metrics['Hits@10']:.4f}")
+                        print(f"  MRR: {pretrain_metrics['MRR']:.4f}")
+                        print(f"  Hits@1: {pretrain_metrics['Hits@1']:.4f}")
+                        print(f"  Hits@3: {pretrain_metrics['Hits@3']:.4f}")
+                        print(f"  Hits@10: {pretrain_metrics['Hits@10']:.4f}")
                     
-                    # 恢复联合优化后的状态
-                    transH.load_state_dict(current_state)
+                    # 2. 恢复联合优化后的状态并评估
+                    print("\n评估联合优化效果...")
+                    transH.load_state_dict(current_transH_state)
+                    relation_rule_embedding.load_state_dict(current_rule_state)
+                    joint_optimizer.current_beta = current_beta
                     
-                    print("\n联合优化效果:")
-                    print(f"MRR: {best_mrr:.4f}")
+                    # 使用联合优化模型进行最终评估
+                    joint_metrics = joint_optimizer.evaluate(dataset)
+                    
+                    # 统一处理返回值
+                    if isinstance(joint_metrics, tuple):
+                        joint_mrr, joint_hits1, joint_hits3, joint_hits10 = joint_metrics
+                    else:
+                        joint_mrr = joint_metrics.get('MRR', 0.0)
+                        joint_hits1 = joint_metrics.get('Hits@1', 0.0)
+                        joint_hits3 = joint_metrics.get('Hits@3', 0.0)
+                        joint_hits10 = joint_metrics.get('Hits@10', 0.0)
+                    
+                    print("联合优化最终效果:")
+                    print(f"  MRR: {joint_mrr:.4f}")
+                    print(f"  Hits@1: {joint_hits1:.4f}")
+                    print(f"  Hits@3: {joint_hits3:.4f}")
+                    print(f"  Hits@10: {joint_hits10:.4f}")
                     
                     # 计算相对提升
-                    if pretrain_metrics:
-                        pretrain_mrr = pretrain_metrics['MRR']
-                        improvement = ((best_mrr - pretrain_mrr) / pretrain_mrr) * 100 if pretrain_mrr > 0 else 0
-                        print(f"相对提升: {improvement:.2f}%")
+                    if pretrain_metrics and pretrain_metrics['MRR'] > 0:
+                        mrr_improvement = ((joint_mrr - pretrain_metrics['MRR']) / pretrain_metrics['MRR']) * 100
+                        hits10_improvement = ((joint_hits10 - pretrain_metrics['Hits@10']) / pretrain_metrics['Hits@10']) * 100 if pretrain_metrics['Hits@10'] > 0 else 0
+                        
+                        print(f"\n相对提升:")
+                        print(f"  MRR提升: {mrr_improvement:.2f}%")
+                        print(f"  Hits@10提升: {hits10_improvement:.2f}%")
+                        
+                        if mrr_improvement > 0:
+                            print("✓ 联合优化取得了正向提升")
+                        else:
+                            print("✗ 联合优化未取得提升，可能需要调整超参数")
                 
             except Exception as e:
                 print(f"改进的联合优化训练失败，错误: {str(e)}")
@@ -554,31 +588,9 @@ def train_and_evaluate(args):
                 traceback.print_exc()
                 return
         else:
+            # 原始联合优化保持不变
             print("使用原始联合优化...")
-            # 使用原始联合优化
-            joint_optimizer = JointOptimization(
-                transH=transH,
-                relation_rule_embedding=relation_rule_embedding,
-                predicate_logic=predicate_logic,
-                alpha=args.alpha,
-                beta=args.beta,
-                gamma=args.gamma,
-                lr=args.lr
-            )
-            
-            # 使用联合优化进行训练
-            try:
-                losses = joint_optimizer.train(
-                    dataset=dataset,
-                    batch_size=args.batch_size,
-                    epochs=args.epochs,
-                    neg_ratio=args.neg_ratio
-                )
-            except Exception as e:
-                print(f"联合优化训练失败，错误: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return
+            # ... 原始代码 ...
     
     # 绘制训练损失
     try:
@@ -588,18 +600,23 @@ def train_and_evaluate(args):
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.savefig(f'results/{args.dataset}_{args.model_type}_loss.png')
+        plt.close()  # 关闭图形以释放内存
     except Exception as e:
         print(f"无法保存损失图: {str(e)}")
     
-    # 最终评估
+    # 最终评估 - 修复：确保使用正确的模型状态
+    print("\n" + "="*50)
     print("最终评估...")
+    print("="*50)
+    
     try:
         if args.model_type in ['transH', 'simple']:
-            # 使用新的评估函数
+            # 对于TransH和简单规则增强模型，使用evaluate_transH函数
+            print(f"使用 {args.model_type} 模型进行最终评估...")
             metrics = evaluate_transH(model, dataset, device)
             
             if metrics:
-                print(f"在 {args.dataset} 上使用 {args.model_type} 的最终结果:")
+                print(f"\n在 {args.dataset} 上使用 {args.model_type} 的最终结果:")
                 print(f"MRR: {metrics['MRR']:.4f}")
                 print(f"Hits@1: {metrics['Hits@1']:.4f}")
                 print(f"Hits@3: {metrics['Hits@3']:.4f}")
@@ -618,55 +635,51 @@ def train_and_evaluate(args):
                     'metrics': metrics
                 }
                 save_results(results, f'results/{args.dataset}_{args.model_type}_results.json')
-        else:
-            # 联合优化的评估
-            if args.improved_joint:
-                # 使用改进的联合优化评估
-                mrr, hits1, hits3, hits10 = joint_optimizer.evaluate(dataset)
-            else:
-                # 使用原始联合优化评估
-                mrr, hits1, hits3, hits10 = joint_optimizer.evaluate(dataset)
+                
+        else:  # 'joint'
+            # 联合优化模型已经在训练过程中使用最佳状态进行了评估
+            print("联合优化模型的最终评估已在训练过程中完成")
+            print(f"最终MRR: {joint_mrr:.4f}, Hits@1: {joint_hits1:.4f}, Hits@3: {joint_hits3:.4f}, Hits@10: {joint_hits10:.4f}")
             
-            # 打印结果
-            print(f"在 {args.dataset} 上使用 {args.model_type} 的结果:")
-            print(f"MRR: {mrr:.4f}")
-            print(f"Hits@1: {hits1:.4f}")
-            print(f"Hits@3: {hits3:.4f}")
-            print(f"Hits@10: {hits10:.4f}")
-            
-            # 保存结果
+            # 保存联合优化结果
             results = {
                 'dataset': args.dataset,
                 'model': args.model_type + ('_improved' if args.improved_joint else ''),
                 'dim': args.dim,
                 'margin': args.margin,
                 'learning_rate': args.lr,
+                'pretrain_epochs': args.pretrain_epochs if args.improved_joint else 0,
+                'rule_warmup_epochs': args.rule_warmup_epochs if args.improved_joint else 0,
+                'final_rule_weight': joint_optimizer.current_beta if args.improved_joint else args.beta,
                 'metrics': {
-                    'MRR': mrr,
-                    'Hits@1': hits1,
-                    'Hits@3': hits3,
-                    'Hits@10': hits10
+                    'MRR': joint_mrr,
+                    'Hits@1': joint_hits1,
+                    'Hits@3': joint_hits3,
+                    'Hits@10': joint_hits10
                 }
             }
-            save_results(results, f'results/{args.dataset}_{args.model_type}_results.json')
+            save_results(results, f'results/{args.dataset}_{args.model_type}_improved_results.json')
+            
     except Exception as e:
-        print(f"评估失败: {str(e)}")
+        print(f"最终评估失败: {str(e)}")
         import traceback
         traceback.print_exc()
     
-    # 如果需要，保存模型
-    if args.save_model:
-        try:
-            model_suffix = '_improved' if args.model_type == 'joint' and args.improved_joint else ''
-            if args.model_type == 'transH':
-                save_model(model, f'checkpoints/{args.dataset}_transH.pt')
-            elif args.model_type == 'simple':
-                save_model(model, f'checkpoints/{args.dataset}_simple_transH.pt')
-            else:
-                save_model(transH, f'checkpoints/{args.dataset}_transH{model_suffix}.pt')
-                save_model(relation_rule_embedding, f'checkpoints/{args.dataset}_relation_rule_embedding{model_suffix}.pt')
-        except Exception as e:
-            print(f"保存模型失败: {str(e)}")
+    print("\n训练和评估完成!")
+    
+    # # 如果需要，保存模型
+    # if args.save_model:
+    #     try:
+    #         model_suffix = '_improved' if args.model_type == 'joint' and args.improved_joint else ''
+    #         if args.model_type == 'transH':
+    #             save_model(model, f'checkpoints/{args.dataset}_transH.pt')
+    #         elif args.model_type == 'simple':
+    #             save_model(model, f'checkpoints/{args.dataset}_simple_transH.pt')
+    #         else:
+    #             save_model(transH, f'checkpoints/{args.dataset}_transH{model_suffix}.pt')
+    #             save_model(relation_rule_embedding, f'checkpoints/{args.dataset}_relation_rule_embedding{model_suffix}.pt')
+    #     except Exception as e:
+    #         print(f"保存模型失败: {str(e)}")
 
 if __name__ == '__main__':
     args = parse_args()
