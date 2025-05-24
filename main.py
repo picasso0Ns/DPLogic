@@ -9,17 +9,15 @@ from models.transH import TransH
 from models.relation_rule_embedding import RelationRuleEmbedding
 from models.predicate_logic import PredicateLogic
 from models.SimpleRuleEnhancedTransH import SimpleRuleEnhancedTransH
-# from optimization.joint_optimization import JointOptimization
-# # 导入新的改进联合优化类
 from optimization.joint_optimization import ImprovedJointOptimization
 from data_utils.dataset import KnowledgeGraphDataset
 from utils import create_dirs, save_model, save_results, set_seed
 
-# 修改后的评估函数 - 只打印每5000个样本的性能
+
 def evaluate_transH(model, dataset, device, test_triples=None, batch_size=128, sample_size=None):
     model.eval()
     
-    # 获取测试三元组
+
     if test_triples is None:
         try:
             test_loader = dataset.get_test_dataloader(batch_size=1)
@@ -40,7 +38,7 @@ def evaluate_transH(model, dataset, device, test_triples=None, batch_size=128, s
                 print("错误: 无法访问测试三元组")
                 return None
     
-    # 如果指定了样本大小，随机采样测试三元组
+
     if sample_size is not None and sample_size < len(test_triples):
         indices = torch.randperm(len(test_triples))[:sample_size]
         test_triples = test_triples[indices]
@@ -294,7 +292,7 @@ def parse_args():
     return parser.parse_args()
 
 def train_transH_with_early_stopping(model, dataset, optimizer, args, device):
-    """修复后的带早停机制的TransH训练函数"""
+
     train_loader = dataset.get_train_dataloader(args.batch_size, args.neg_ratio)
     
     losses = []
@@ -356,10 +354,10 @@ def train_transH_with_early_stopping(model, dataset, optimizer, args, device):
         avg_loss = epoch_loss / max(num_batches, 1)
         losses.append(avg_loss)
         
-        # 打印当前epoch的损失
+
         print(f"Epoch {epoch+1} Loss: {avg_loss:.4f}")
         
-        # 阶段性评估
+
         if (epoch + 1) % args.eval_interval == 0 or (epoch + 1) == args.epochs:
             print(f"在Epoch {epoch+1}进行评估...")
             
@@ -494,8 +492,7 @@ def train_and_evaluate(args):
         ).to(device)
         
         if args.improved_joint:
-            print("使用改进的联合优化...")
-            # 使用改进的联合优化器
+
             joint_optimizer = ImprovedJointOptimization(
                 transH=transH,
                 relation_rule_embedding=relation_rule_embedding,
@@ -510,7 +507,7 @@ def train_and_evaluate(args):
                 rule_decay_rate=0.9
             )
             
-            # 使用改进的联合优化进行训练
+
             try:
                 losses, best_mrr, pretrained_transH = joint_optimizer.train(
                     dataset=dataset,
@@ -523,7 +520,7 @@ def train_and_evaluate(args):
                 
                 print(f"训练完成，最佳MRR: {best_mrr:.4f}")
                 
-                # 比较预训练TransH和联合优化效果
+
                 if pretrained_transH:
                     print("\n===== 预训练TransH vs 联合优化对比 =====")
                     
@@ -543,8 +540,7 @@ def train_and_evaluate(args):
                         print(f"  Hits@1: {pretrain_metrics['Hits@1']:.4f}")
                         print(f"  Hits@3: {pretrain_metrics['Hits@3']:.4f}")
                         print(f"  Hits@10: {pretrain_metrics['Hits@10']:.4f}")
-                    
-                    # 2. 恢复联合优化后的状态并评估
+   
                     print("\n评估联合优化效果...")
                     transH.load_state_dict(current_transH_state)
                     relation_rule_embedding.load_state_dict(current_rule_state)
@@ -637,7 +633,7 @@ def train_and_evaluate(args):
                 save_results(results, f'results/{args.dataset}_{args.model_type}_results.json')
                 
         else:  # 'joint'
-            # 联合优化模型已经在训练过程中使用最佳状态进行了评估
+
             print("联合优化模型的最终评估已在训练过程中完成")
             print(f"最终MRR: {joint_mrr:.4f}, Hits@1: {joint_hits1:.4f}, Hits@3: {joint_hits3:.4f}, Hits@10: {joint_hits10:.4f}")
             
