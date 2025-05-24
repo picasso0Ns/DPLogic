@@ -246,11 +246,11 @@ class ImprovedJointOptimization:
         self.rule_application_count = {rule: 0 for rule in self.rules}
         self.rule_success_count = {rule: 0 for rule in self.rules}
         
-        # 基于规则置信度初始化权重
+
         for i, rule in enumerate(self.rules):
             rule_str = f"rule_{i}"
             confidence = self.rule_confidences.get(rule, 0.1)
-            init_weight = max(confidence, 0.1)  # 这是关键修改
+            init_weight = max(confidence, 0.1)  
             # 初始化为规则置信度值
             self.learnable_rule_weights[rule_str] = nn.Parameter(torch.tensor(confidence, device=self.device))
             self.rule_weights[rule] = rule_str
@@ -259,7 +259,7 @@ class ImprovedJointOptimization:
         self.mln_nodes, self.mln_edges = predicate_logic.get_mln_structure()
         self.observed_facts, self.unobserved_facts = predicate_logic.get_observed_unobserved()
         
-        # 初始化优化器 - 确保参数是唯一的
+   
         all_params = set()
         unique_params = []
         
@@ -274,14 +274,14 @@ class ImprovedJointOptimization:
             lr=lr
         )
         
-        # 单独的优化器用于预训练阶段
+
         self.pretrain_optimizer = Adam(list(transH.parameters()), lr=lr)
         
         # 实体和关系ID的上限
         self.max_entity_id = transH.num_entities - 1
         self.max_relation_id = transH.num_relations - 1
         
-        # 初始化因子图（用于跟踪规则影响的三元组）
+
         self.factor_graph = self._initialize_factor_graph()
         
         # 保存最佳模型状态
@@ -292,7 +292,7 @@ class ImprovedJointOptimization:
      # 获取规则
         self.rules, self.rule_confidences = predicate_logic.get_rules()
         
-        # 添加：随机打印一些规则
+
         print(f"\n===== 总共获取了 {len(self.rules)} 条规则 =====")
         print("随机展示10条规则：")
         import random
@@ -379,7 +379,7 @@ class ImprovedJointOptimization:
         neg_batch_size = neg_triples.size(0)
         neg_ratio = neg_batch_size // pos_batch_size
         
-        # 如果使用过滤，确保负样本中没有训练中的正样本
+
         if use_filter and hasattr(self, 'all_triples'):
             filtered_neg_triples = []
             for i in range(neg_batch_size):
@@ -401,7 +401,7 @@ class ImprovedJointOptimization:
         if current_epoch < self.pretrain_epochs:
             return rep_loss
         
-        # 计算规则增强损失
+ 
         rule_loss = self._compute_rule_enhanced_loss(pos_triples)
         
         # 计算规则权重正则化损失
@@ -409,8 +409,7 @@ class ImprovedJointOptimization:
         
         # 总损失
         total_loss = self.alpha * rep_loss + self.current_beta * rule_loss + self.gamma * weight_reg_loss
-        
-        # 每10批次打印一次损失组成
+
         if torch.rand(1).item() < 0.1:  # 10%的概率打印
             print(f"损失组成 - 表示: {rep_loss.item():.4f}, 规则: {rule_loss.item():.4f}, "
                   f"规则权重: {self.current_beta:.4f}, 加权规则损失: {(self.current_beta * rule_loss).item():.4f}")
@@ -440,7 +439,7 @@ class ImprovedJointOptimization:
             # 查找适用于该关系的规则
             applicable_rules = [rule for rule in self.rules if rule[0] == r.item() or r.item() in rule[1]]
             
-            # 添加：打印当前三元组应用的规则
+  
             if should_print and i == 0 and applicable_rules:
                 print(f"\n当前三元组 ({h.item()}, {r.item()}, {t.item()}) 的适用规则：")
                 for j, rule in enumerate(applicable_rules[:3]):  # 只打印前3条
@@ -599,193 +598,7 @@ class ImprovedJointOptimization:
         self.rule_application_count = {rule: 0 for rule in self.rules}
         self.rule_success_count = {rule: 0 for rule in self.rules}
     
-    # def train(self, dataset, batch_size=128, epochs=100, neg_ratio=1, eval_interval=5, patience=7):
-    #     """
-    #     改进的训练过程，包括预训练、渐进式规则引入和动态规则评估。
-        
-    #     参数:
-    #         dataset: KnowledgeGraphDataset
-    #         batch_size: 批次大小
-    #         epochs: 训练轮次数
-    #         neg_ratio: 负采样比率
-    #         eval_interval: 评估间隔轮次
-    #         patience: 早期停止耐心值
-            
-    #     返回:
-    #         训练损失列表, 最佳MRR, 预训练TransH状态
-    #     """
-    #     print(f"训练{epochs}个轮次，包括{self.pretrain_epochs}轮预训练...")
-        
-    #     losses = []
-    #     beta_history = []  # 记录规则权重历史
-        
-    #     # 获取数据加载器
-    #     train_loader = dataset.get_train_dataloader(batch_size, neg_ratio)
-        
-    #     # 保存原始TransH模型状态用于后续恢复
-    #     original_transH_state = copy.deepcopy(self.transH.state_dict())
-    #     best_model_state = None
-    #     best_mrr = 0
-    #     best_epoch = 0
-    #     patience_counter = 0
-        
-    #     # 创建小型验证集，用于早期停止判断
-    #     val_size = min(5000, len(dataset.test_triples))
-    #     val_indices = np.random.choice(len(dataset.test_triples), size=val_size, replace=False)
-    #     val_triples = [dataset.test_triples[i] for i in val_indices]
-        
-
-
-
-
-    #     for epoch in range(epochs):
-
-
-
-
-    #         if epoch >= self.pretrain_epochs:
-    #             print("\n当前最有效的5条规则：")
-    #             effective_rules = sorted(
-    #                 [(rule, self.rule_effectiveness.get(rule, 0), self.learnable_rule_weights[self.rule_weights[rule]].item()) 
-    #                  for rule in self.rules],
-    #                 key=lambda x: x[1] * x[2],  # 有效性 * 权重
-    #                 reverse=True
-    #             )[:5]
-                
-    #             for rule, eff, weight in effective_rules:
-    #                 head_rel, body_rels = rule
-    #                 confidence = self.rule_confidences.get(rule, 0.0)
-    #                 print(f"  {head_rel} <- {body_rels}")
-    #                 print(f"    置信度: {confidence:.4f}, 有效性: {eff:.4f}, 学习权重: {weight:.4f}")
-
-
-
-    #         # 明确设置当前规则权重
-    #         if epoch < self.pretrain_epochs:
-    #             self.current_beta = 0.0  # 预训练阶段不使用规则
-    #             phase = "预训练阶段"
-    #         elif epoch < self.pretrain_epochs + self.rule_warmup_epochs:
-    #             progress = (epoch - self.pretrain_epochs) / self.rule_warmup_epochs
-    #             self.current_beta = self.init_beta + progress * (self.target_beta - self.init_beta)
-    #             phase = "规则预热阶段"
-    #         else:
-    #             self.current_beta = self.target_beta
-    #             phase = "全权重阶段"
-            
-    #         beta_history.append(self.current_beta)
-    #         print(f"\n轮次 {epoch+1}/{epochs} ({phase})")
-    #         print(f"当前规则权重: {self.current_beta:.4f}")
-            
-    #         epoch_loss = 0
-    #         num_batches = 0
-            
-    #         for batch in tqdm(train_loader, desc=f"轮次 {epoch+1} 训练"):
-    #             try:
-    #                 # 在预训练阶段使用不同的优化器
-    #                 if epoch < self.pretrain_epochs:
-    #                     self.pretrain_optimizer.zero_grad()
-    #                 else:
-    #                     self.optimizer.zero_grad()
-                    
-    #                 # 统一的前向传播
-    #                 loss = self.joint_forward(batch, epoch, epochs)
-                    
-    #                 # 反向传播和优化
-    #                 loss.backward()
-                    
-    #                 # 梯度裁剪，防止训练不稳定
-    #                 torch.nn.utils.clip_grad_norm_(self.transH.parameters(), 1.0)
-                    
-    #                 if epoch < self.pretrain_epochs:
-    #                     self.pretrain_optimizer.step()
-    #                 else:
-    #                     self.optimizer.step()
-                    
-    #                 epoch_loss += loss.item()
-    #                 num_batches += 1
-                    
-    #             except Exception as e:
-    #                 print(f"批次错误: {e}")
-    #                 import traceback
-    #                 traceback.print_exc()
-    #                 continue
-            
-    #         avg_loss = epoch_loss / max(num_batches, 1)
-    #         losses.append(avg_loss)
-            
-    #         print(f"轮次 {epoch+1} 损失: {avg_loss:.4f}, 规则权重: {self.current_beta:.4f}")
-            
-    #         # 规范化TransH参数
-    #         self.transH.normalizeEmbedding()
-            
-    #         # 如果是预训练结束，保存预训练的模型状态
-    #         if epoch == self.pretrain_epochs - 1:
-    #             pretrained_transH_state = copy.deepcopy(self.transH.state_dict())
-    #             print("预训练完成，保存预训练模型状态")
-            
-    #         # 定期评估模型
-    #         if (epoch + 1) % eval_interval == 0 or epoch == epochs - 1:
-    #             # 使用验证集快速评估
-    #             mrr, hits1, hits3, hits10 = self.quick_evaluate(val_triples)
-    #             print(f"轮次 {epoch+1} 评估结果: MRR={mrr:.4f}, Hits@1={hits1:.4f}, Hits@3={hits3:.4f}, Hits@10={hits10:.4f}")
-                
-    #             # 保存最佳模型
-    #             current_metric = mrr  # 使用MRR作为主要指标
-    #             if current_metric > best_mrr:
-    #                 best_mrr = current_metric
-    #                 best_epoch = epoch + 1
-    #                 best_model_state = {
-    #                     'transH': copy.deepcopy(self.transH.state_dict()),
-    #                     'relation_rule_embedding': copy.deepcopy(self.relation_rule_embedding.state_dict()),
-    #                     'rule_weights': {rule: self.learnable_rule_weights[self.rule_weights[rule]].item() 
-    #                                      for rule in self.rules},
-    #                     'current_beta': self.current_beta
-    #                 }
-    #                 print(f"找到新的最佳模型，MRR: {best_mrr:.4f}")
-    #                 patience_counter = 0
-    #             else:
-    #                 patience_counter += 1
-    #                 print(f"模型未改进，耐心计数: {patience_counter}/{patience}")
-                    
-    #                 # 学习率衰减
-    #                 if patience_counter % 3 == 0 and patience_counter > 0:
-    #                     for param_group in self.optimizer.param_groups:
-    #                         param_group['lr'] *= 0.5
-    #                     print(f"降低学习率至 {self.optimizer.param_groups[0]['lr']:.6f}")
-                    
-    #                 # 早期停止
-    #                 if patience_counter >= patience:
-    #                     print(f"早期停止于轮次 {epoch+1}")
-    #                     break
-            
-    #         # 更新规则有效性并衰减低效规则的权重
-    #         if epoch >= self.pretrain_epochs and (epoch + 1) % 5 == 0:
-    #             self.update_rule_effectiveness()
-    #             self._print_rule_statistics()
-        
-    #     # 恢复最佳模型
-    #     if best_model_state:
-    #         print(f"恢复最佳模型（轮次 {best_epoch}，MRR: {best_mrr:.4f}）")
-    #         self.transH.load_state_dict(best_model_state['transH'])
-    #         self.relation_rule_embedding.load_state_dict(best_model_state['relation_rule_embedding'])
-    #         self.current_beta = best_model_state['current_beta']
-    #         for rule, weight in best_model_state['rule_weights'].items():
-    #             if rule in self.rule_weights:
-    #                 rule_str = self.rule_weights[rule]
-    #                 self.learnable_rule_weights[rule_str].data = torch.tensor(weight, device=self.device)
-        
-    #     # 绘制规则权重历史图
-    #     try:
-    #         plt.figure(figsize=(10, 6))
-    #         plt.plot(beta_history)
-    #         plt.title('规则权重历史')
-    #         plt.xlabel('Epoch')
-    #         plt.ylabel('规则权重 (beta)')
-    #         plt.savefig('results/rule_weight_history.png')
-    #     except Exception as e:
-    #         print(f"绘图错误: {e}")
-        
-    #     return losses, best_mrr, pretrained_transH_state if 'pretrained_transH_state' in locals() else None
+   
     
     def _print_rule_statistics(self):
         """
